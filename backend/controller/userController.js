@@ -29,10 +29,10 @@ export const login = async (req, res) => {
             return res.status(404).json({message: "user doesn't exist"});
         }
         const validPassword = bcrypt.compare(password, user.password);
-        if (!validPassword) {
-            return res.status(401).json({message: "wrong password"});
+        if (!user || !validPassword) {
+            return res.status(401).json({message: "wrong email or password"});
         }
-        const token = jwt.sign({user}, process.env.JWT_SECRET_KEY, {expiresIn: '24h'}); // creates token every request???
+        const token = jwt.sign({userId: user._id}, process.env.JWT_SECRET_KEY); // creates token every request???
         res.status(200).json({
             message: "login successfull",
             token: token,
@@ -53,16 +53,15 @@ export const getProfile = async (req, res) => {
 }
 
 export const updateProfile = async (req, res) => {
-    
+    if (req.userId !== req.params.id) {
+        return res.status(401).json({message: "You can't update this profile"});
+    }
     try {
         const user = await User.findById(req.params.id);
         if (!user) {
             return res.status(404).json({message: "user doesn't exist"});
-        };
+        };  
         const newProfile = req.body;
-        if (newProfile.password) {
-            return res.status(401).json({message: "You can't update your password here"});
-        }
         Object.keys(newProfile).forEach(key => {
             user[key] = newProfile[key];
         });
@@ -73,23 +72,5 @@ export const updateProfile = async (req, res) => {
         });
     } catch (err) {
         res.status(500).json({message: `Failed to update profile: ${err.message}`});
-    }
-}
-
-export const changePassword = async (req, res) => {
-    const {oldPassword, newPassword} = req.body;
-    try {
-        const user = await User.findById(req.params.id);
-        if (!user) {
-            return res.status(404).json({message: "user doesn't exist"});
-        } else if (!oldPassword || await bcrypt.compare(oldPassword, user.password)) {
-            return res.status(403).json({message: "old password is not correct"});
-        }
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
-        user.password = hashedPassword;
-        await user.save();
-        return res.status(200).json({message: "Password successfully updated"});
-    } catch (err) {
-        res.status(500).json({message: `Failed to change password: ${err.message}`});
     }
 }
