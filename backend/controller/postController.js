@@ -2,6 +2,7 @@
 import { Thread } from "../models/post.js";
 import { Comment } from "../models/comment.js";
 import { User } from "../models/user.js";
+import { io } from "../index.js";
 
 export const getThreads = async (req, res) => {
     try {
@@ -14,8 +15,13 @@ export const getThreads = async (req, res) => {
 
 export const getThread = async (req, res) => {
     try {
-        const thread = await Thread.findById(req.params.id).populate('author').populate('comments').populate('comments.author');    //??this doesn't seem to populate the authors of the comments.
-        console.log(thread.comments[0].author);
+        const thread = await Thread.findById(req.params.id).populate('author').populate('comments').populate({
+            path: 'comments',
+            populate: {
+                path: 'author',
+                model: 'User'
+            }
+        });
         return thread? res.status(200).json(thread):  res.status(404).json({message: "no threads found"});
     } catch (err) {
         res.status(500).json({message: `Failed to retrieve thread: ${err.message}`});
@@ -39,6 +45,7 @@ export const createThread = async (req, res) => {
         await newthread.save();
         author.threads.push(newthread);
         await author.save();
+        io.emit('createdThread', newthread);
         res.status(201).json({
             message: "Thread created successfully",
             data: newthread
@@ -60,7 +67,8 @@ export const updateThread = async (req, res) =>{
             thread[key] = updatedThread[key];
         });
         await thread.save();
-        return res.status(201).json({
+        io.emit('updatedThread', thread);
+        res.status(201).json({
             message: "Thread updated Successfully!",
             data: thread
         });
@@ -72,16 +80,17 @@ export const updateThread = async (req, res) =>{
 export const deleteThread = async(req, res) => {
     try{
         const threadId = req.params.id;
-        const thread = await Thread.findById(threadId);
+        const thread = await Thread.findByIdAndDelete(threadId);
         if (!thread) return res.status(404).json({message: "thread not found"});
         if(req.userId !== thread.author.toString()) return res.status(401).json({message: "Unauthorized access to thread"});
 
-        const user = await User.findById(thread.author);
-        const index = user.threads.indexOf(thread);
-        user.threads.splice(index, 1);
-        user.save();
+        const user = await User.findById(thread.author.toString());
+        user.comments.remove(thread);
+        await user.save();
+
         await Thread.deleteOne(thread);
         res.status(204).send({message: "thread deleted successfully"});
+        io.emit('deletedThread', thread);
     } catch (err) {
         return res.status(500).json({message: `failed to delete thread: ${err.message}`});
     }
@@ -94,14 +103,14 @@ export const createComment = async (req, res) => {
         const author = await User.findById(req.userId);
         const newComment = new Comment({author, parentThread, content});
         await newComment.save();
-        console.log(newComment);
 
         author.comments.push(newComment);
         parentThread.comments.push(newComment);
         await author.save();
         await parentThread.save();
         
-        return res.status(201).json({message: "Comment added successfully"});
+        io.emit('createdComment', newComment);
+        res.status(201).json({message: "Comment added successfully"});
     } catch (err) {
         return res.status(500).json({message: `failed to add comment: ${err.message}`});
     }
@@ -119,7 +128,8 @@ export const updateComment = async (req, res) => {
         existingComment.content = req.body.content;
         await existingComment.save();
 
-        return res.status(200).json({message: "Comment updated successfully"});
+        io.emit('updatedComment', existingComment);
+        res.status(200).json({message: "Comment updated successfully"});
     } catch (err) {
         return res.status(500).json({message: `failed to update comment: ${err.message}`});
     }
@@ -141,7 +151,8 @@ export const deleteComment = async(req, res) => {
         await parentThread.save();
 
         await Comment.deleteOne(comment);
-        return res.status(204).send({message: "comment deleted successfully"});
+        io.emit('deletedComment', comment);
+        res.status(204).send({message: "comment deleted successfully"});
     } catch (err) {
         return res.status(500).json({message: `failed to delete comment: ${err.message}`});
     }
